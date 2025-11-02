@@ -1,0 +1,412 @@
+import sys
+import math
+import random
+
+class UltimateTicTacToe:
+    def __init__(self):
+        # 9 small boards, each with 9 cells
+        self.small_boards = [[0] * 9 for _ in range(9)]
+        # Status of each small board: 0=active, 1=I won, -1=opponent won, 2=draw
+        self.board_status = [0] * 9
+        # Track which board the next player must play in (-1 means any board)
+        self.next_board = -1
+        self.last_opponent_move = None
+        
+    def get_board_and_cell(self, row, col):
+        """Convert global coordinates to board index and cell index"""
+        board_row = row // 3
+        board_col = col // 3
+        board_idx = board_row * 3 + board_col
+        
+        cell_row = row % 3
+        cell_col = col % 3
+        cell_idx = cell_row * 3 + cell_col
+        
+        return board_idx, cell_idx
+    
+    def get_global_coords(self, board_idx, cell_idx):
+        """Convert board index and cell index to global coordinates"""
+        board_row = board_idx // 3
+        board_col = board_idx % 3
+        cell_row = cell_idx // 3
+        cell_col = cell_idx % 3
+        
+        row = board_row * 3 + cell_row
+        col = board_col * 3 + cell_col
+        
+        return row, col
+    
+    def update_opponent_move(self, row, col):
+        """Update the game state with opponent's move"""
+        if row == -1 and col == -1:
+            self.next_board = -1  # First move, we can play anywhere
+            return
+            
+        self.last_opponent_move = (row, col)
+        board_idx, cell_idx = self.get_board_and_cell(row, col)
+        
+        print(f"DEBUG: Opponent played on board {board_idx}, cell {cell_idx}", file=sys.stderr, flush=True)
+        
+        # Update the small board
+        self.small_boards[board_idx][cell_idx] = -1
+        
+        # Update board status if this move completed a board
+        self.update_board_status(board_idx)
+        
+        # The cell they played in determines which board we must play in next
+        self.next_board = cell_idx
+        print(f"DEBUG: We must play in board {self.next_board}", file=sys.stderr, flush=True)
+    
+    def update_board_status(self, board_idx):
+        """Check if a small board has been won"""
+        board = self.small_boards[board_idx]
+        
+        # Check if board already decided
+        if self.board_status[board_idx] != 0:
+            return
+            
+        # Winning patterns
+        lines = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],  # Rows
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],  # Columns
+            [0, 4, 8], [2, 4, 6]              # Diagonals
+        ]
+        
+        for line in lines:
+            if board[line[0]] == board[line[1]] == board[line[2]] != 0:
+                self.board_status[board_idx] = board[line[0]]
+                return
+        
+        # Check for draw
+        if all(cell != 0 for cell in board):
+            self.board_status[board_idx] = 2
+    
+    def get_valid_moves(self):
+        """Get all valid moves based on game rules"""
+        valid_moves = []
+        
+        # If next_board is -1 or the target board is completed, we can play anywhere
+        if self.next_board == -1 or self.board_status[self.next_board] != 0:
+            for board_idx in range(9):
+                if self.board_status[board_idx] == 0:  # Board is active
+                    for cell_idx in range(9):
+                        if self.small_boards[board_idx][cell_idx] == 0:  # Cell is empty
+                            row, col = self.get_global_coords(board_idx, cell_idx)
+                            valid_moves.append((row, col))
+        else:
+            # Must play in the specified board
+            board_idx = self.next_board
+            for cell_idx in range(9):
+                if self.small_boards[board_idx][cell_idx] == 0:
+                    row, col = self.get_global_coords(board_idx, cell_idx)
+                    valid_moves.append((row, col))
+        
+        return valid_moves
+    
+    def evaluate_position(self):
+        """Evaluate the current game state"""
+        score = 0
+        
+        # Strategic values for board positions
+        board_weights = [3, 2, 3,
+                        2, 4, 2, 
+                        3, 2, 3]
+        
+        # Evaluate global board (main tic-tac-toe)
+        global_lines = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],  # Rows
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],  # Columns
+            [0, 4, 8], [2, 4, 6]              # Diagonals
+        ]
+        
+        for line in global_lines:
+            my_boards = sum(1 for idx in line if self.board_status[idx] == 1)
+            opp_boards = sum(1 for idx in line if self.board_status[idx] == -1)
+            
+            if my_boards == 3:
+                return 100000  # We win the game!
+            if opp_boards == 3:
+                return -100000  # Opponent wins the game
+                
+            if my_boards == 2 and opp_boards == 0:
+                score += 5000  # We're about to win
+            if opp_boards == 2 and my_boards == 0:
+                score -= 6000  # Opponent is about to win
+                
+            if my_boards == 1 and opp_boards == 0:
+                score += 200
+            if opp_boards == 1 and my_boards == 0:
+                score -= 250
+        
+        # Evaluate control of individual boards
+        for board_idx in range(9):
+            weight = board_weights[board_idx]
+            
+            if self.board_status[board_idx] == 1:
+                score += 300 * weight
+            elif self.board_status[board_idx] == -1:
+                score -= 350 * weight
+            elif self.board_status[board_idx] == 0:  # Active board
+                board_score = self.evaluate_small_board(board_idx)
+                score += board_score * weight
+        
+        return score
+    
+    def evaluate_small_board(self, board_idx):
+        """Evaluate the state of a single small board"""
+        board = self.small_boards[board_idx]
+        score = 0
+        
+        lines = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
+        ]
+        
+        for line in lines:
+            my_cells = sum(1 for idx in line if board[idx] == 1)
+            opp_cells = sum(1 for idx in line if board[idx] == -1)
+            empty_cells = 3 - my_cells - opp_cells
+            
+            if my_cells == 3:
+                return 1000  # Shouldn't happen since board is active
+            if opp_cells == 3:
+                return -1000
+                
+            if my_cells == 2 and empty_cells == 1:
+                score += 100  # We can win this board next move
+            if opp_cells == 2 and empty_cells == 1:
+                score -= 150  # Opponent can win this board next move
+                
+            if my_cells == 1 and opp_cells == 0:
+                score += 10
+            if opp_cells == 1 and my_cells == 0:
+                score -= 15
+        
+        # Center control
+        if board[4] == 1:
+            score += 5
+        elif board[4] == -1:
+            score -= 7
+            
+        # Corner control
+        corners = [0, 2, 6, 8]
+        my_corners = sum(1 for idx in corners if board[idx] == 1)
+        opp_corners = sum(1 for idx in corners if board[idx] == -1)
+        score += (my_corners - opp_corners) * 3
+        
+        return score
+    
+    def get_move_quality(self, row, col):
+        """Quick evaluation of a single move's quality"""
+        board_idx, cell_idx = self.get_board_and_cell(row, col)
+        score = 0
+        
+        # Strategic cell positions
+        if cell_idx == 4:  # Center of small board
+            score += 3
+        elif cell_idx in [0, 2, 6, 8]:  # Corners
+            score += 1
+            
+        # Strategic board positions  
+        if board_idx == 4:  # Center board
+            score += 4
+        elif board_idx in [0, 2, 6, 8]:  # Corner boards
+            score += 2
+            
+        # Check if this move wins the small board
+        temp_board = self.small_boards[board_idx][:]
+        temp_board[cell_idx] = 1
+        
+        lines = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8],
+            [0, 3, 6], [1, 4, 7], [2, 5, 8],
+            [0, 4, 8], [2, 4, 6]
+        ]
+        
+        for line in lines:
+            if all(temp_board[i] == 1 for i in line):
+                score += 50
+                break
+                
+        # Check if this blocks opponent from winning the small board
+        temp_board[cell_idx] = -1
+        for line in lines:
+            if all(temp_board[i] == -1 for i in line):
+                score += 60
+                break
+        
+        # Consider where we're sending the opponent next
+        next_opponent_board = cell_idx
+        if self.board_status[next_opponent_board] != 0:
+            # We're sending opponent to a completed board - they get free choice
+            score -= 2
+        else:
+            # Check if the board we're sending them to has good moves for them
+            opponent_options = sum(1 for i in range(9) 
+                                if self.small_boards[next_opponent_board][i] == 0)
+            if opponent_options <= 2:
+                score += 2  # We're sending them to a nearly full board
+        
+        return score
+    
+    def minimax(self, depth, alpha, beta, maximizing, valid_moves):
+        """Minimax search with alpha-beta pruning"""
+        if depth == 0 or not valid_moves:
+            return self.evaluate_position(), None
+            
+        if maximizing:
+            best_score = -math.inf
+            best_move = valid_moves[0]
+            
+            # Order moves by quality for better pruning
+            scored_moves = []
+            for move in valid_moves:
+                score = self.get_move_quality(move[0], move[1])
+                scored_moves.append((score, move))
+            scored_moves.sort(reverse=True)
+            ordered_moves = [move for _, move in scored_moves]
+            
+            for move in ordered_moves[:12]:  # Limit branching for speed
+                row, col = move
+                board_idx, cell_idx = self.get_board_and_cell(row, col)
+                
+                # Save state
+                old_cell = self.small_boards[board_idx][cell_idx]
+                old_status = self.board_status[board_idx]
+                old_next = self.next_board
+                
+                # Make move
+                self.small_boards[board_idx][cell_idx] = 1
+                self.update_board_status(board_idx)
+                self.next_board = cell_idx  # Opponent must play in this board
+                
+                # Get opponent's valid moves
+                next_valid = self.get_valid_moves()
+                
+                score, _ = self.minimax(depth - 1, alpha, beta, False, next_valid)
+                
+                # Undo move
+                self.small_boards[board_idx][cell_idx] = old_cell
+                self.board_status[board_idx] = old_status
+                self.next_board = old_next
+                
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+                    
+                alpha = max(alpha, score)
+                if beta <= alpha:
+                    break
+                    
+            return best_score, best_move
+        else:
+            best_score = math.inf
+            best_move = valid_moves[0]
+            
+            for move in valid_moves[:10]:  # Limit opponent moves for speed
+                row, col = move
+                board_idx, cell_idx = self.get_board_and_cell(row, col)
+                
+                # Save state
+                old_cell = self.small_boards[board_idx][cell_idx]
+                old_status = self.board_status[board_idx]
+                old_next = self.next_board
+                
+                # Make opponent move
+                self.small_boards[board_idx][cell_idx] = -1
+                self.update_board_status(board_idx)
+                self.next_board = cell_idx  # We must play in this board next
+                
+                # Get our valid moves
+                next_valid = self.get_valid_moves()
+                
+                score, _ = self.minimax(depth - 1, alpha, beta, True, next_valid)
+                
+                # Undo move
+                self.small_boards[board_idx][cell_idx] = old_cell
+                self.board_status[board_idx] = old_status
+                self.next_board = old_next
+                
+                if score < best_score:
+                    best_score = score
+                    best_move = move
+                    
+                beta = min(beta, score)
+                if beta <= alpha:
+                    break
+                    
+            return best_score, best_move
+    
+    def choose_move(self, valid_actions):
+        """Choose the best move using appropriate strategy"""
+        if not valid_actions:
+            return (0, 0)
+            
+        # Get our calculated valid moves (should match engine's valid_actions)
+        our_valid_moves = self.get_valid_moves()
+        
+        # Use engine's valid actions as ground truth
+        actual_moves = [move for move in valid_actions if move in our_valid_moves]
+        if not actual_moves:
+            actual_moves = valid_actions  # Fallback
+            
+        print(f"DEBUG: Choosing from {len(actual_moves)} moves", file=sys.stderr, flush=True)
+        
+        # For early game or many options, use quick evaluation
+        if len(actual_moves) > 15:
+            scored_moves = []
+            for move in actual_moves:
+                score = self.get_move_quality(move[0], move[1])
+                # Add small randomness to avoid being predictable
+                score += random.random() * 0.1
+                scored_moves.append((score, move))
+            
+            scored_moves.sort(reverse=True)
+            return scored_moves[0][1]
+        else:
+            # Use minimax for more critical positions
+            try:
+                depth = 3 if len(actual_moves) <= 10 else 2
+                _, best_move = self.minimax(depth, -math.inf, math.inf, True, actual_moves)
+                if best_move and best_move in actual_moves:
+                    return best_move
+            except Exception as e:
+                print(f"DEBUG: Minimax failed: {e}", file=sys.stderr, flush=True)
+            
+            # Fallback to quick evaluation
+            scored_moves = []
+            for move in actual_moves:
+                score = self.get_move_quality(move[0], move[1])
+                scored_moves.append((score, move))
+            scored_moves.sort(reverse=True)
+            return scored_moves[0][1] if scored_moves else actual_moves[0]
+
+
+# Main game loop
+game = UltimateTicTacToe()
+
+while True:
+    # Read inputs
+    opponent_row, opponent_col = [int(i) for i in input().split()]
+    valid_action_count = int(input())
+    valid_actions = []
+    
+    for i in range(valid_action_count):
+        row, col = [int(j) for j in input().split()]
+        valid_actions.append((row, col))
+    
+    # Update game state with opponent's move
+    game.update_opponent_move(opponent_row, opponent_col)
+    
+    # Choose our move
+    our_move = game.choose_move(valid_actions)
+    
+    # Update our move in game state
+    our_board, our_cell = game.get_board_and_cell(our_move[0], our_move[1])
+    game.small_boards[our_board][our_cell] = 1
+    game.update_board_status(our_board)
+    # The cell we play determines where opponent plays next
+    game.next_board = our_cell
+    
+    print(f"{our_move[0]} {our_move[1]}")
